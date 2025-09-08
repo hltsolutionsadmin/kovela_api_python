@@ -1,0 +1,25 @@
+# Python virtual environment
+venv/
+venv-face/
+.env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# DeepFace / TensorFlow models and cache
+*.h5
+*.pb
+*.ckpt
+.dlib/
+.face_recognition_cache/
+.deepface/
+
+# Logs
+*.log
+
+# OS junk
+.DS_Store
+Thumbs.db
