@@ -1,7 +1,12 @@
-# Python virtual environment
+# Virtual environments
 venv/
 venv-face/
-.env/
+env/
+ENV/
+lib/
+Lib/
+include/
+Scripts/
 
 # Python cache
 __pycache__/
@@ -9,16 +14,19 @@ __pycache__/
 *.pyo
 *.pyd
 
-# DeepFace / TensorFlow models and cache
+# DeepFace / TensorFlow model files and cache
 *.h5
 *.pb
 *.ckpt
 .dlib/
-.face_recognition_cache/
 .deepface/
+.face_recognition_cache/
 
 # Logs
 *.log
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
 
 # OS junk
 .DS_Store
