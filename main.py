@@ -1,6 +1,8 @@
 import os
+import json
 import base64
 import threading
+import logging
 from typing import List, Tuple
 from flask import Flask, request, jsonify
 from deepface import DeepFace
@@ -10,17 +12,34 @@ import faiss
 # -----------------------
 # Config
 # -----------------------
-DB_PATH = os.environ.get("FACE_DB_PATH", "./face_db")
-INDEX_PATH = os.environ.get("FAISS_INDEX_PATH", "./face_index.faiss")
-IDS_PATH = os.environ.get("FAISS_IDS_PATH", "./faiss_ids.npy")
+DB_PATH = os.environ.get("FACE_DB_PATH", "/home/skillratlatest/face_db")
+INDEX_PATH = os.environ.get("FAISS_INDEX_PATH", "/home/skillratlatest/face_index.faiss")
+IDS_PATH = os.environ.get("FAISS_IDS_PATH", "/home/skillratlatest/faiss_ids.npy")
 MODEL_NAME = os.environ.get("MODEL_NAME", "ArcFace")
 DEFAULT_TOP_K = int(os.environ.get("TOP_K", "10"))
 DEFAULT_THRESHOLD = float(os.environ.get("THRESHOLD", "0.35"))
 ANTI_SPOOF = os.environ.get("ANTI_SPOOF", "false").lower() == "true"
+MAX_CONTENT_LENGTH = int(os.environ.get("MAX_CONTENT_LENGTH", 10*1024*1024))  # 10MB
 
 os.makedirs(DB_PATH, exist_ok=True)
 
+# -----------------------
+# Logging
+# -----------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.FileHandler("/home/skillratlatest/deepface_api.log"),
+        logging.StreamHandler()
+    ]
+)
+
+# -----------------------
+# Flask App
+# -----------------------
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
 
 # -----------------------
 # Globals
@@ -33,33 +52,32 @@ INDEX_LOCK = threading.Lock()
 
 
 # -----------------------
-# Helpers
+# Helper Functions
 # -----------------------
 def _load_index():
-    """Load FAISS index and external IDs safely"""
     global INDEX, IDS
     if os.path.exists(INDEX_PATH) and os.path.exists(IDS_PATH):
         INDEX = faiss.read_index(INDEX_PATH)
         IDS = np.load(IDS_PATH, allow_pickle=True).tolist()
         if INDEX.ntotal != len(IDS):
             raise RuntimeError("FAISS index and ids.npy are out of sync.")
+        logging.info(f"Loaded FAISS index with {INDEX.ntotal} entries")
     else:
         INDEX = faiss.IndexFlatIP(D)
+        logging.info("Initialized empty FAISS index")
 
 
 def _save_index():
-    """Persist FAISS index and ID mapping"""
-    faiss.write_index(INDEX, INDEX_PATH)
-    np.save(IDS_PATH, np.array(IDS, dtype=object), allow_pickle=True)
+    with INDEX_LOCK:
+        faiss.write_index(INDEX, INDEX_PATH)
+        np.save(IDS_PATH, np.array(IDS, dtype=object), allow_pickle=True)
+        logging.info("Saved FAISS index and IDs")
 
 
 def _l2_normalize(vec: np.ndarray) -> np.ndarray:
-    """L2 normalize embeddings for cosine similarity"""
     vec = vec.astype("float32")
     norm = np.linalg.norm(vec)
-    if norm == 0:
-        return vec
-    return vec / norm
+    return vec / norm if norm > 0 else vec
 
 
 def _b64_to_image_bytes(b64: str) -> bytes:
@@ -67,7 +85,6 @@ def _b64_to_image_bytes(b64: str) -> bytes:
 
 
 def _write_image(external_id: str, img_bytes: bytes) -> str:
-    """Save raw user image for reference/thumbnail use"""
     path = os.path.join(DB_PATH, f"{external_id}.jpg")
     with open(path, "wb") as f:
         f.write(img_bytes)
@@ -75,7 +92,6 @@ def _write_image(external_id: str, img_bytes: bytes) -> str:
 
 
 def _read_image_b64(external_id: str) -> str:
-    """Return stored image as base64 string"""
     path = os.path.join(DB_PATH, f"{external_id}.jpg")
     if not os.path.exists(path):
         return ""
@@ -84,27 +100,22 @@ def _read_image_b64(external_id: str) -> str:
 
 
 def _represent_image_bytes(img_bytes: bytes) -> Tuple[np.ndarray, str]:
-    """Extract normalized embedding + thumbnail from image bytes"""
     temp_path = os.path.join(DB_PATH, "__tmp__.jpg")
     with open(temp_path, "wb") as f:
         f.write(img_bytes)
-
     try:
         reps = DeepFace.represent(
             img_path=temp_path,
             model_name=MODEL_NAME,
             enforce_detection=True,
-            detector_backend="opencv",  # stable for server-side
+            detector_backend="opencv",
             align=True,
             anti_spoofing=ANTI_SPOOF
         )
-
         if not reps or "embedding" not in reps[0]:
             raise ValueError("Face/embedding not found or spoof detected.")
-
         emb = np.array(reps[0]["embedding"], dtype="float32")
         emb = _l2_normalize(emb)
-
         thumb_b64 = base64.b64encode(open(temp_path, "rb").read()).decode("utf-8")
         return emb, thumb_b64
     finally:
@@ -115,14 +126,13 @@ def _represent_image_bytes(img_bytes: bytes) -> Tuple[np.ndarray, str]:
 
 
 def _search_top_k(query_emb: np.ndarray, top_k: int) -> Tuple[np.ndarray, np.ndarray]:
-    """Search top K nearest embeddings"""
     q = query_emb.reshape(1, -1).astype("float32")
     scores, idx = INDEX.search(q, top_k)
     return scores, idx
 
 
 # -----------------------
-# API Routes
+# Routes
 # -----------------------
 @app.route("/health", methods=["GET"])
 def health():
@@ -140,7 +150,8 @@ def embed():
         emb, thumb_b64 = _represent_image_bytes(img_bytes)
         return jsonify({"embedding": emb.tolist(), "thumbnail": thumb_b64})
     except Exception as e:
-        return jsonify({"error": f"Embedding failed: {str(e)}"}), 500
+        logging.error(f"Embed error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/enroll", methods=["POST"])
@@ -163,6 +174,7 @@ def enroll():
             IDS.append(external_id)
             _save_index()
 
+        logging.info(f"Enrolled {external_id}, total={INDEX.ntotal}")
         return jsonify({
             "message": "Enrolled successfully",
             "externalId": external_id,
@@ -171,7 +183,8 @@ def enroll():
             "count": INDEX.ntotal
         })
     except Exception as e:
-        return jsonify({"error": f"Enrollment failed: {str(e)}"}), 500
+        logging.error(f"Enroll error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/check", methods=["POST"])
@@ -216,7 +229,6 @@ def check():
             matches.append(match)
 
         resp_type = "existing" if best_score >= threshold else "new"
-
         return jsonify({
             "type": resp_type,
             "bestScore": best_score,
@@ -224,9 +236,14 @@ def check():
             "matches": matches
         })
     except Exception as e:
-        return jsonify({"error": f"Check failed: {str(e)}"}), 500
+        logging.error(f"Check error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
+# -----------------------
+# Main
+# -----------------------
 if __name__ == "__main__":
     _load_index()
-    app.run(host="127.0.0.1", port=5001, debug=False, threaded=True)
+    logging.info(f"Starting DeepFace API on 0.0.0.0:5001, model={MODEL_NAME}, DB entries={INDEX.ntotal}")
+    app.run(host="0.0.0.0", port=5001, debug=False, threaded=True)
