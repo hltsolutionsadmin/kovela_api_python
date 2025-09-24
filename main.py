@@ -206,6 +206,8 @@ def check():
 
 if __name__ == "__main__":
     _load_index()
-    app.run(host="0.0.0.0", port=8000, debug=False, threaded=True)
+    port = int(os.environ.get("PORT", 8000))  # ✅ Fix for Azure
+    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
+
 
 
