@@ -11,7 +11,6 @@ from deepface import DeepFace
 import numpy as np
 import faiss
 
-# -----------------------
 # Config
 # -----------------------
 DB_PATH = os.environ.get("FACE_DB_PATH", "./face_db")
