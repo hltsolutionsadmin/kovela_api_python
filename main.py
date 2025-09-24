@@ -127,7 +127,7 @@ def enroll():
     data = request.get_json(force=True)
     b64 = data.get("base64Image") or data.get("base64_image")
     external_id = data.get("externalId") or data.get("external_id")
-    if not b64 or len(b64) < 1000:
+    if not b64 or len(b64) < 100:
         return jsonify({"error": "Base64Image is required/too short"}), 400
     if not external_id:
         return jsonify({"error": "externalId is required"}), 400
@@ -207,4 +207,5 @@ def check():
 if __name__ == "__main__":
     _load_index()
     app.run(host="0.0.0.0", port=8000, debug=False, threaded=True)
+
 
