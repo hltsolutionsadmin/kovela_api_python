@@ -207,4 +207,4 @@ def check():
 
 if __name__ == "__main__":
     _load_index()
-    app.run(host="0.0.0.0", port=5001, debug=False, threaded=True)
+    app.run(host="0.0.0.0", port=8000, debug=False, threaded=True)
