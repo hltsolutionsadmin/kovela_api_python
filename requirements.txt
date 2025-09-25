@@ -6,6 +6,8 @@ tqdm==4.65.0
 Pillow==9.5.0
 opencv-python-headless==4.7.0.72
 tensorflow-cpu==2.11.0
+# Prevent DeepFace from pulling default tensorflow
+tensorflow==2.11.0
 keras==2.11.0
 Flask==2.2.5
 flask-cors==4.0.1
